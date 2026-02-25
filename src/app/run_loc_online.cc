@@ -33,6 +33,9 @@ int main(int argc, char** argv) {
     loc.SetInitPose(SE3());
     loc.Spin();
 
+    /// 显式调用 Quit 以确保轨迹保存
+    loc.Quit();
+
     rclcpp::shutdown();
 
     return 0;

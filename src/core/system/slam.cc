@@ -189,6 +189,9 @@ void SlamSystem::SaveMap(const std::string& path) {
     // pcl::io::savePCDFileBinaryCompressed(save_path + "/global_no_loop.pcd", *global_map_no_loop);
     // pcl::io::savePCDFileBinaryCompressed(save_path + "/global_raw.pcd", *global_map_raw);
 
+    /// 保存轨迹
+    SaveTrajectory(save_path + "trajectory.csv");
+
     if (options_.with_gridmap_) {
         /// 2D 栅格：以 nav_msgs/OccupancyGrid 为中间格式，输出 map.pgm + map.yaml
         /// 存为ROS兼容的模式
@@ -246,6 +249,49 @@ void SlamSystem::SaveMap(const std::string& path) {
     }
 
     LOG(INFO) << "map saved";
+}
+
+void SlamSystem::SaveTrajectory(const std::string& file_path) {
+    /// 轨迹保存路径：优先使用传入 path；为空则使用配置文件中的路径
+    std::string save_path = file_path;
+    if (save_path.empty()) {
+        save_path = "./data/trajectory.csv";
+    }
+
+    LOG(INFO) << "Saving trajectory to " << save_path;
+
+    /// 从 LIO 前端获取所有关键帧
+    auto keyframes = lio_->GetAllKeyframes();
+
+    if (keyframes.empty()) {
+        LOG(WARNING) << "No keyframes to save trajectory";
+        return;
+    }
+
+    /// 打开文件
+    std::ofstream ofs(save_path);
+    if (!ofs.is_open()) {
+        LOG(ERROR) << "Failed to open trajectory file: " << save_path;
+        return;
+    }
+
+    /// 写入 CSV 文件头
+    ofs << "timestamp,tx,ty,tz,qx,qy,qz,qw\n";
+    ofs << std::fixed << std::setprecision(12);
+
+    /// 写入轨迹数据（使用优化后的位姿）
+    for (const auto& kf : keyframes) {
+        const auto& pose = kf->GetOptPose();
+        const auto& t = pose.translation();
+        const auto& q = pose.unit_quaternion();
+        double timestamp = kf->GetState().timestamp_;
+
+        ofs << timestamp << "," << t.x() << "," << t.y() << "," << t.z() << "," << q.x() << "," << q.y() << "," << q.z()
+            << "," << q.w() << "\n";
+    }
+
+    ofs.close();
+    LOG(INFO) << "Trajectory saved to " << save_path << ", total " << keyframes.size() << " keyframes";
 }
 
 void SlamSystem::ProcessIMU(const lightning::IMUPtr& imu) {

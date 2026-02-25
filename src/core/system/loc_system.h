@@ -47,6 +47,9 @@ class LocSystem {
     /// 实时模式下的spin
     void Spin();
 
+    /// 退出并保存轨迹
+    void Quit();
+
    private:
     Options options_;
 
@@ -54,6 +57,7 @@ class LocSystem {
 
     std::atomic_bool loc_started_ = false;  // 是否开启定位
     std::atomic_bool map_loaded_ = false;   // 地图是否已载入
+    std::atomic_bool finished_ = false;     // 是否已经调用Finish
 
     /// 实时模式下的ros2 node, subscribers
     rclcpp::Node::SharedPtr node_;

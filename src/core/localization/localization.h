@@ -39,6 +39,10 @@ class Localization {
         bool enable_lidar_loc_rviz_ = false;   // 是否允许调试用rviz
         int lidar_loc_skip_num_ = 4;           // 如果允许跳帧，跳多少帧
         bool loc_on_kf_ = false;
+
+        // 轨迹保存配置
+        bool save_trajectory_ = false;                                // 是否保存轨迹
+        std::string trajectory_file_path_ = "./data/trajectory.csv";  // 轨迹保存路径
     };
 
     Localization(Options options = Options());
@@ -115,6 +119,8 @@ class Localization {
 
     /// 结果数据 =====================================================================================================
     LocalizationResult loc_result_;
+    std::vector<LocalizationResult> trajectory_results_;
+    std::mutex trajectory_mutex_;
 
     /// 框架相关
     TFCallback tf_callback_;
@@ -126,6 +132,9 @@ class Localization {
     double last_imu_time_ = 0;
     double last_odom_time_ = 0;
     double last_cloud_time_ = 0;
+
+    /// 保存轨迹
+    bool SaveTrajectory(const std::string& file_path);
 };
 }  // namespace loc
 

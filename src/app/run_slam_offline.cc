@@ -4,6 +4,7 @@
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <yaml-cpp/yaml.h>
 
 #include "core/system/slam.h"
 #include "ui/pangolin_window.h"
@@ -49,6 +50,7 @@ int main(int argc, char** argv) {
     lightning::YAML_IO yaml(FLAGS_config);
     std::string lidar_topic = yaml.GetValue<std::string>("common", "lidar_topic");
     std::string imu_topic = yaml.GetValue<std::string>("common", "imu_topic");
+    std::string livox_topic = yaml.GetValue<std::string>("common", "livox_lidar_topic");
 
     rosbag
         /// IMU 的处理
@@ -64,15 +66,25 @@ int main(int argc, char** argv) {
                                   slam.ProcessLidar(msg);
                                   return true;
                               })
+
         /// livox 的处理
-        .AddLivoxCloudHandle("/livox/lidar",
-                             [&slam](livox_ros_driver2::msg::CustomMsg::SharedPtr cloud) {
-                                 slam.ProcessLidar(cloud);
+        .AddLivoxCloudHandle(livox_topic,
+                             [&slam](livox_ros_driver2::msg::CustomMsg::SharedPtr msg) {
+                                 slam.ProcessLidar(msg);
                                  return true;
                              })
         .Go();
 
     slam.SaveMap("");
+
+    /// 根据配置保存轨迹
+    YAML::Node config = YAML::LoadFile(FLAGS_config);
+    if (config["system"] && config["system"]["save_trajectory"] && config["system"]["save_trajectory"].as<bool>()) {
+        std::string trajectory_path = config["system"]["trajectory_file_path"].as<std::string>();
+        slam.SaveTrajectory(trajectory_path);
+        LOG(INFO) << "Trajectory saved to: " << trajectory_path;
+    }
+
     Timer::PrintAll();
 
     LOG(INFO) << "done";

@@ -60,6 +60,10 @@ system:
   map_path: ./data/new_map/
   pub_tf: true
 
+  # 轨迹保存配置
+  save_trajectory: false # 是否保存轨迹
+  trajectory_file_path: ./data/trajectory.csv # 轨迹保存路径
+
 loop_closing:
   loop_kf_gap: 20       # 每隔多少个关键帧检查一次
   min_id_interval: 20   # 被检查的关键帧ID间隔

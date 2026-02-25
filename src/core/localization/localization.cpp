@@ -1,5 +1,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <fstream>
+#include <iomanip>
 
 #include "core/localization/lidar_loc/lidar_loc.h"
 #include "core/localization/localization.h"
@@ -65,6 +67,10 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
     options_.lidar_odom_skip_num_ = yaml.GetValue<int>("system", "lidar_odom_skip_num");
     options_.loc_on_kf_ = yaml.GetValue<bool>("lidar_loc", "loc_on_kf");
 
+    // 读取轨迹保存配置
+    options_.save_trajectory_ = yaml.GetValue<bool>("system", "save_trajectory");
+    options_.trajectory_file_path_ = yaml.GetValue<std::string>("system", "trajectory_file_path");
+
     lidar_odom_proc_cloud_.SetMaxSize(1);
     lidar_loc_proc_cloud_.SetMaxSize(1);
 
@@ -91,6 +97,11 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
         //         }
 
         loc_result_ = res;
+
+        if (loc_result_.valid_) {
+            UL lock(trajectory_mutex_);
+            trajectory_results_.push_back(loc_result_);
+        }
 
         if (tf_callback_ && loc_result_.valid_) {
             tf_callback_(loc_result_.ToGeoMsg());
@@ -315,6 +326,12 @@ void Localization::Finish() {
 
     lidar_loc_proc_cloud_.Quit();
     lidar_odom_proc_cloud_.Quit();
+
+    // 根据配置保存轨迹
+    if (options_.save_trajectory_) {
+        LOG(INFO) << "Saving trajectory to " << options_.trajectory_file_path_;
+        SaveTrajectory(options_.trajectory_file_path_);
+    }
 }
 
 void Localization::SetExternalPose(const Eigen::Quaterniond& q, const Eigen::Vector3d& t) {
@@ -326,5 +343,37 @@ void Localization::SetExternalPose(const Eigen::Quaterniond& q, const Eigen::Vec
 }
 
 void Localization::SetTFCallback(Localization::TFCallback&& callback) { tf_callback_ = callback; }
+
+bool Localization::SaveTrajectory(const std::string& file_path) {
+    UL lock(trajectory_mutex_);
+
+    if (trajectory_results_.empty()) {
+        LOG(WARNING) << "No trajectory data to save";
+        return false;
+    }
+
+    std::ofstream ofs(file_path);
+    if (!ofs.is_open()) {
+        LOG(ERROR) << "Failed to open file: " << file_path;
+        return false;
+    }
+
+    // 写入CSV文件头
+    ofs << "timestamp,tx,ty,tz,qx,qy,qz,qw,confidence,status\n";
+    ofs << std::fixed << std::setprecision(12);
+
+    // 写入轨迹数据
+    for (const auto& result : trajectory_results_) {
+        const auto& t = result.pose_.translation();
+        const auto& q = result.pose_.unit_quaternion();
+
+        ofs << result.timestamp_ << "," << t.x() << "," << t.y() << "," << t.z() << "," << q.x() << "," << q.y() << ","
+            << q.z() << "," << q.w() << "," << result.confidence_ << "," << static_cast<int>(result.status_) << "\n";
+    }
+
+    ofs.close();
+    LOG(INFO) << "Trajectory saved to " << file_path << ", total " << trajectory_results_.size() << " frames";
+    return true;
+}
 
 }  // namespace lightning::loc

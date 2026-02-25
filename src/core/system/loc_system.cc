@@ -14,7 +14,11 @@ LocSystem::LocSystem(LocSystem::Options options) : options_(options) {
     signal(SIGINT, lightning::debug::SigHandle);
 }
 
-LocSystem::~LocSystem() { loc_->Finish(); }
+LocSystem::~LocSystem() {
+    if (!finished_ && loc_ != nullptr) {
+        loc_->Finish();
+    }
+}
 
 bool LocSystem::Init(const std::string &yaml_path) {
     loc::Localization::Options opt;
@@ -100,6 +104,15 @@ void LocSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr 
 void LocSystem::Spin() {
     if (node_ != nullptr) {
         spin(node_);
+    }
+}
+
+void LocSystem::Quit() {
+    if (!finished_ && loc_ != nullptr) {
+        LOG(INFO) << "Saving trajectory before shutdown...";
+        loc_->Finish();
+        finished_ = true;
+        LOG(INFO) << "Trajectory saved successfully.";
     }
 }
 
