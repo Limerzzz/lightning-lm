@@ -81,8 +81,12 @@ int main(int argc, char** argv) {
     YAML::Node config = YAML::LoadFile(FLAGS_config);
     if (config["system"] && config["system"]["save_trajectory"] && config["system"]["save_trajectory"].as<bool>()) {
         std::string trajectory_path = config["system"]["trajectory_file_path"].as<std::string>();
-        slam.SaveTrajectory(trajectory_path);
-        LOG(INFO) << "Trajectory saved to: " << trajectory_path;
+        bool use_high_frequency = false;
+        if (config["system"] && config["system"]["use_high_frequency_trajectory"]) {
+            use_high_frequency = config["system"]["use_high_frequency_trajectory"].as<bool>();
+        }
+        slam.SaveTrajectory(trajectory_path, use_high_frequency);
+        LOG(INFO) << "Trajectory saved to: " << trajectory_path << " (high frequency: " << use_high_frequency << ")";
     }
 
     Timer::PrintAll();

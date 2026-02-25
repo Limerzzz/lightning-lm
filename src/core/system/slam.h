@@ -65,7 +65,7 @@ class SlamSystem {
     void SaveMap(const std::string& path = "");
 
     /// 保存轨迹
-    void SaveTrajectory(const std::string& file_path = "");
+    void SaveTrajectory(const std::string& file_path = "", bool use_high_frequency = false);
 
     /// 处理IMU
     void ProcessIMU(const lightning::IMUPtr& imu);

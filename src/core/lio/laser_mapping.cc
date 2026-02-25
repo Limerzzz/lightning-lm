@@ -246,6 +246,9 @@ bool LaserMapping::Run() {
             state_point_.timestamp_ = measures_.lidar_end_time_;
             euler_cur_ = state_point_.rot_;
             pos_lidar_ = state_point_.pos_ + state_point_.rot_ * state_point_.offset_t_lidar_;
+
+            /// 保存当前帧位姿到历史记录（用于高频率轨迹输出）
+            pose_history_.emplace_back(state_point_);
         },
         "IEKF Solve and Update");
 

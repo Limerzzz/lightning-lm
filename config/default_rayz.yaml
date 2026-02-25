@@ -65,6 +65,7 @@ system:
   # 轨迹保存配置
   save_trajectory: true # 是否保存轨迹
   trajectory_file_path: ./data/trajectory.csv # 轨迹保存路径
+  use_high_frequency_trajectory: true # 是否使用高频率轨迹
 
 loop_closing:
   loop_kf_gap: 20       # 每隔多少个关键帧检查一次

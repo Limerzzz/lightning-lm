@@ -98,6 +98,9 @@ class LaserMapping {
 
     std::vector<Keyframe::Ptr> GetAllKeyframes() { return all_keyframes_; }
 
+    /// 获取所有帧的位姿历史（高频率轨迹）
+    std::vector<NavState> GetAllPoses() { return pose_history_; }
+
     /**
      * 计算全局地图
      * @param use_lio_pose
@@ -150,6 +153,9 @@ class LaserMapping {
     Keyframe::Ptr last_kf_ = nullptr;
     int kf_id_ = 0;
 
+    /// 所有帧的位姿历史（高频率轨迹）
+    std::vector<NavState> pose_history_;
+
     /// point clouds data
     CloudPtr scan_undistort_{new PointCloudType()};   // scan after undistortion
     CloudPtr scan_down_body_{new PointCloudType()};   // downsampled scan in body
@@ -170,7 +176,7 @@ class LaserMapping {
     std::deque<lightning::IMUPtr> imu_buffer_;
 
     /// options
-    bool keep_first_imu_estimation_ = false;    // 在没有建立地图前，是否要使用前几帧的IMU状态
+    bool keep_first_imu_estimation_ = false;  // 在没有建立地图前，是否要使用前几帧的IMU状态
     double timediff_lidar_wrt_imu_ = 0.0;
     double last_timestamp_lidar_ = 0;
     double lidar_end_time_ = 0;

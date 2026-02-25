@@ -251,7 +251,7 @@ void SlamSystem::SaveMap(const std::string& path) {
     LOG(INFO) << "map saved";
 }
 
-void SlamSystem::SaveTrajectory(const std::string& file_path) {
+void SlamSystem::SaveTrajectory(const std::string& file_path, bool use_high_frequency) {
     /// 轨迹保存路径：优先使用传入 path；为空则使用配置文件中的路径
     std::string save_path = file_path;
     if (save_path.empty()) {
@@ -259,14 +259,6 @@ void SlamSystem::SaveTrajectory(const std::string& file_path) {
     }
 
     LOG(INFO) << "Saving trajectory to " << save_path;
-
-    /// 从 LIO 前端获取所有关键帧
-    auto keyframes = lio_->GetAllKeyframes();
-
-    if (keyframes.empty()) {
-        LOG(WARNING) << "No keyframes to save trajectory";
-        return;
-    }
 
     /// 打开文件
     std::ofstream ofs(save_path);
@@ -279,19 +271,37 @@ void SlamSystem::SaveTrajectory(const std::string& file_path) {
     ofs << "timestamp,tx,ty,tz,qx,qy,qz,qw\n";
     ofs << std::fixed << std::setprecision(12);
 
-    /// 写入轨迹数据（使用优化后的位姿）
-    for (const auto& kf : keyframes) {
-        const auto& pose = kf->GetOptPose();
-        const auto& t = pose.translation();
-        const auto& q = pose.unit_quaternion();
-        double timestamp = kf->GetState().timestamp_;
+    if (use_high_frequency) {
+        /// 使用高频率数据（所有帧位姿）
+        auto poses = lio_->GetAllPoses();
+        LOG(INFO) << "Saving high frequency trajectory with " << poses.size() << " poses to " << save_path;
 
-        ofs << timestamp << "," << t.x() << "," << t.y() << "," << t.z() << "," << q.x() << "," << q.y() << "," << q.z()
-            << "," << q.w() << "\n";
+        for (const auto& pose : poses) {
+            SE3 T = pose.GetPose();
+            Vec3d t = T.translation();
+            Quatd q = T.unit_quaternion();
+
+            ofs << pose.timestamp_ << "," << t.x() << "," << t.y() << "," << t.z() << "," << q.x() << "," << q.y()
+                << "," << q.z() << "," << q.w() << "\n";
+        }
+    } else {
+        /// 使用关键帧数据（低频率）
+        auto keyframes = lio_->GetAllKeyframes();
+        LOG(INFO) << "Saving keyframe trajectory with " << keyframes.size() << " keyframes to " << save_path;
+
+        for (const auto& kf : keyframes) {
+            const auto& pose = kf->GetOptPose();
+            const auto& t = pose.translation();
+            const auto& q = pose.unit_quaternion();
+            double timestamp = kf->GetState().timestamp_;
+
+            ofs << timestamp << "," << t.x() << "," << t.y() << "," << t.z() << "," << q.x() << "," << q.y() << ","
+                << q.z() << "," << q.w() << "\n";
+        }
     }
 
     ofs.close();
-    LOG(INFO) << "Trajectory saved to " << save_path << ", total " << keyframes.size() << " keyframes";
+    LOG(INFO) << "Trajectory saved to " << save_path;
 }
 
 void SlamSystem::ProcessIMU(const lightning::IMUPtr& imu) {
