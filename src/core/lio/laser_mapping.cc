@@ -146,6 +146,13 @@ void LaserMapping::ProcessIMU(const lightning::IMUPtr &imu) {
     imu_buffer_.emplace_back(imu);
 }
 
+
+/**
+ * @brief 运行激光雷达映射
+ * 
+ * @return true 成功
+ * @return false 失败
+ */
 bool LaserMapping::Run() {
     if (!SyncPackages()) {
         return false;
@@ -280,6 +287,10 @@ bool LaserMapping::Run() {
     return true;
 }
 
+/**
+ * @brief 生成关键帧
+ * 
+ */
 void LaserMapping::MakeKF() {
     Keyframe::Ptr kf = std::make_shared<Keyframe>(kf_id_++, scan_undistort_, state_point_);
 
@@ -307,7 +318,11 @@ void LaserMapping::MakeKF() {
 
     last_kf_ = kf;
 }
-
+/**
+ * @brief 处理激光雷达点云消息
+ * 
+ * @param msg 激光雷达点云消息指针
+ */
 void LaserMapping::ProcessPointCloud2(const sensor_msgs::msg::PointCloud2::SharedPtr &msg) {
     UL lock(mtx_buffer_);
     Timer::Evaluate(

@@ -16,18 +16,25 @@
 
 namespace lightning {
 
+/// SLAM 系统编排层实现：
+/// - 负责创建/初始化前端 LIO（LaserMapping）与可选模块（回环、UI、2D 栅格）
+/// - 在线模式下创建 ROS2 Node 并订阅传感器话题
+/// - 在关键帧产生时，将关键帧分发给回环/栅格/UI
+/// - 提供保存地图服务与离线保存入口
 SlamSystem::SlamSystem(lightning::SlamSystem::Options options) : options_(options) {
     /// handle ctrl-c
     signal(SIGINT, lightning::debug::SigHandle);
 }
 
 bool SlamSystem::Init(const std::string& yaml_path) {
+    /// 1) 初始化前端 LIO（建图/关键帧产生的主入口）
     lio_ = std::make_shared<LaserMapping>();
     if (!lio_->Init(yaml_path)) {
         LOG(ERROR) << "failed to init lio module";
         return false;
     }
 
+    /// 2) 从 YAML 读取系统开关，按需创建可选模块
     auto yaml = YAML::LoadFile(yaml_path);
     options_.with_loop_closing_ = yaml["system"]["with_loop_closing"].as<bool>();
     options_.with_visualization_ = yaml["system"]["with_ui"].as<bool>();
@@ -64,6 +71,7 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         }
 
         if (options_.with_2dvisualization_) {
+            /// 栅格更新回调：将地图转换为 CV 图像并显示
             g2p5_->SetMapUpdateCallback([this](g2p5::G2P5MapPtr map) {
                 cv::Mat image = map->ToCV();
                 cv::imshow("map", image);
@@ -81,6 +89,7 @@ bool SlamSystem::Init(const std::string& yaml_path) {
     if (options_.online_mode_) {
         LOG(INFO) << "online mode, creating ros2 node ... ";
 
+        /// 3) 在线模式：创建 ROS2 Node 并订阅传感器话题（IMU/点云/Livox）
         /// subscribers
         node_ = std::make_shared<rclcpp::Node>("lightning_slam");
 
@@ -113,6 +122,7 @@ bool SlamSystem::Init(const std::string& yaml_path) {
                 Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
             });
 
+        /// 保存地图服务（在线模式）：调用 SaveMap(req,res) 落盘 ./data/<map_id>/
         savemap_service_ = node_->create_service<SaveMapService>(
             "lightning/save_map", [this](const SaveMapService::Request::SharedPtr& req,
                                          SaveMapService::Response::SharedPtr res) { SaveMap(req, res); });
@@ -130,12 +140,14 @@ SlamSystem::~SlamSystem() {
 }
 
 void SlamSystem::StartSLAM(std::string map_name) {
+    /// 标记系统进入运行态（未 Start 前传感器数据会被丢弃）
     map_name_ = map_name;
     running_ = true;
 }
 
 void SlamSystem::SaveMap(const SaveMapService::Request::SharedPtr request,
                          SaveMapService::Response::SharedPtr response) {
+    /// 由 ROS2 service 触发保存：map_id 作为目录名
     map_name_ = request->map_id;
     std::string save_path = "./data/" + map_name_ + "/";
 
@@ -144,6 +156,7 @@ void SlamSystem::SaveMap(const SaveMapService::Request::SharedPtr request,
 }
 
 void SlamSystem::SaveMap(const std::string& path) {
+    /// 保存目录：优先使用传入 path；为空则落盘到 ./data/<map_name_>/
     std::string save_path = path;
     if (save_path.empty()) {
         save_path = "./data/" + map_name_ + "/";
@@ -151,6 +164,7 @@ void SlamSystem::SaveMap(const std::string& path) {
 
     LOG(INFO) << "slam map saving to " << save_path;
 
+    /// 为避免混用旧地图，若目录已存在则先清空再重建
     if (!std::filesystem::exists(save_path)) {
         std::filesystem::create_directories(save_path);
     } else {
@@ -158,10 +172,11 @@ void SlamSystem::SaveMap(const std::string& path) {
         std::filesystem::create_directories(save_path);
     }
 
-    // auto global_map_no_loop = lio_->GetGlobalMap(true);
+    /// global_map：点云地图（是否使用回环优化结果由参数决定）
     auto global_map = lio_->GetGlobalMap(!options_.with_loop_closing_);
     // auto global_map_raw = lio_->GetGlobalMap(!options_.with_loop_closing_, false, 0.1);
 
+    /// 将“整幅点云地图”转换为分块地图（大地图加载更友好）
     TiledMap::Options tm_options;
     tm_options.map_path_ = save_path;
 
@@ -169,11 +184,13 @@ void SlamSystem::SaveMap(const std::string& path) {
     SE3 start_pose = lio_->GetAllKeyframes().front()->GetOptPose();
     tm.ConvertFromFullPCD(global_map, start_pose, save_path);
 
+    /// 同时输出一个整图 pcd 便于调试/可视化
     pcl::io::savePCDFileBinaryCompressed(save_path + "/global.pcd", *global_map);
     // pcl::io::savePCDFileBinaryCompressed(save_path + "/global_no_loop.pcd", *global_map_no_loop);
     // pcl::io::savePCDFileBinaryCompressed(save_path + "/global_raw.pcd", *global_map_raw);
 
     if (options_.with_gridmap_) {
+        /// 2D 栅格：以 nav_msgs/OccupancyGrid 为中间格式，输出 map.pgm + map.yaml
         /// 存为ROS兼容的模式
         auto map = g2p5_->GetNewestMap()->ToROS();
         const int width = map.info.width;
@@ -235,17 +252,24 @@ void SlamSystem::ProcessIMU(const lightning::IMUPtr& imu) {
     if (running_ == false) {
         return;
     }
+    /// IMU 只进入前端 LIO（时间同步/积分/预测在前端内部完成）
     lio_->ProcessIMU(imu);
 }
-
+/**
+ * @brief 处理激光雷达点云
+ *
+ * @param cloud 激光雷达点云消息指针
+ */
 void SlamSystem::ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cloud) {
     if (running_ == false) {
         return;
     }
 
+    /// 点云进入前端：预处理 + 迭代优化 + 更新关键帧
     lio_->ProcessPointCloud2(cloud);
     lio_->Run();
 
+    /// 仅当产生了“新关键帧”时才继续向后端/栅格/UI 分发
     auto kf = lio_->GetKeyframe();
     if (kf != cur_kf_) {
         cur_kf_ = kf;
@@ -258,14 +282,17 @@ void SlamSystem::ProcessLidar(const sensor_msgs::msg::PointCloud2::SharedPtr& cl
     }
 
     if (options_.with_loop_closing_) {
+        /// 回环模块消费关键帧（内部异步）
         lc_->AddKF(cur_kf_);
     }
 
     if (options_.with_gridmap_) {
+        /// 栅格模块消费关键帧（在线模式下内部可异步渲染）
         g2p5_->PushKeyframe(cur_kf_);
     }
 
     if (ui_) {
+        /// 3D UI 更新关键帧与轨迹显示
         ui_->UpdateKF(cur_kf_);
     }
 }
@@ -275,6 +302,7 @@ void SlamSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr
         return;
     }
 
+    /// Livox 点云路径与 PointCloud2 一致（内部会按消息类型走不同解析）
     lio_->ProcessPointCloud2(cloud);
     lio_->Run();
 
@@ -303,6 +331,7 @@ void SlamSystem::ProcessLidar(const livox_ros_driver2::msg::CustomMsg::SharedPtr
 }
 
 void SlamSystem::Spin() {
+    /// 在线模式下进入 ROS2 事件循环；离线模式不需要 Spin()
     if (options_.online_mode_ && node_ != nullptr) {
         spin(node_);
     }
