@@ -30,6 +30,9 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
 
     if (yaml_node["ins"]) {
         auto ins_node = yaml_node["ins"];
+        if (ins_node["enable_fusion"]) {
+            ins_config_.enable_fusion = ins_node["enable_fusion"].as<bool>();
+        }
         if (ins_node["use_llh"]) {
             ins_config_.use_llh = ins_node["use_llh"].as<bool>();
         }
@@ -65,6 +68,8 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
             ins_config_.rtk_other_ang_noise = pgo_node["rtk_other_ang_noise"].as<double>() * constant::kDEG2RAD;
         }
     }
+
+    LOG(INFO) << "INS fusion in localization PGO: " << (ins_config_.enable_fusion ? "enabled" : "disabled");
 
     /// lidar odom前端
     LaserMapping::Options opt_lio;
@@ -330,7 +335,7 @@ void Localization::ProcessIMUMsg(IMUPtr imu) {
 
 void Localization::ProcessInsMsg(const bot_msg::msg::LocalizationInfo::SharedPtr msg) {
     UL lock(global_mutex_);
-    if (!msg || pgo_ == nullptr) {
+    if (!ins_config_.enable_fusion || !msg || pgo_ == nullptr) {
         return;
     }
 

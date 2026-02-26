@@ -12,6 +12,7 @@
 namespace lightning {
 
 struct InsConfig {
+    bool enable_fusion = true;
     bool use_llh = true;
     double base_longtitude = 0.0;
     double base_latitude = 0.0;

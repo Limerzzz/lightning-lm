@@ -6,6 +6,7 @@ common:
   imu_topic: "/imu/data"
 
 ins:
+  enable_fusion: true
   topic: "/localization_info"
   use_llh: true
   base_longtitude: 117.37730582

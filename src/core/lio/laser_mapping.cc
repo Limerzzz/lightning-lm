@@ -154,13 +154,16 @@ void LaserMapping::ProcessIMU(const lightning::IMUPtr &imu) {
 }
 
 void LaserMapping::ProcessInsMsg(const bot_msg::msg::LocalizationInfo::SharedPtr &msg) {
-    if (!msg) {
+    if (!ins_config_.enable_fusion || !msg) {
         return;
     }
     ProcessIns(ConvertLocalizationInfo(*msg, ins_config_));
 }
 
 void LaserMapping::ProcessIns(const InsMeasurement &ins) {
+    if (!ins_config_.enable_fusion) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(ins_mutex_);
     if (!ins_buffer_.empty() && ins.timestamp < ins_buffer_.back().timestamp) {
         LOG(WARNING) << "INS timestamp rollback: " << std::setprecision(18) << ins.timestamp << " < "
@@ -174,6 +177,9 @@ void LaserMapping::ProcessIns(const InsMeasurement &ins) {
 }
 
 bool LaserMapping::FindNearestIns(double timestamp, InsMeasurement &out) {
+    if (!ins_config_.enable_fusion) {
+        return false;
+    }
     std::lock_guard<std::mutex> lock(ins_mutex_);
     if (ins_buffer_.empty()) {
         return false;
@@ -205,6 +211,9 @@ bool LaserMapping::FindNearestIns(double timestamp, InsMeasurement &out) {
 void LaserMapping::LoadInsConfigFromYAML(const YAML::Node &yaml) {
     auto ins_node = yaml["ins"];
     if (ins_node) {
+        if (ins_node["enable_fusion"]) {
+            ins_config_.enable_fusion = ins_node["enable_fusion"].as<bool>();
+        }
         if (ins_node["use_llh"]) {
             ins_config_.use_llh = ins_node["use_llh"].as<bool>();
         }
@@ -240,6 +249,8 @@ void LaserMapping::LoadInsConfigFromYAML(const YAML::Node &yaml) {
             ins_config_.rtk_other_ang_noise = pgo_node["rtk_other_ang_noise"].as<double>() * constant::kDEG2RAD;
         }
     }
+
+    LOG(INFO) << "INS fusion in LIO: " << (ins_config_.enable_fusion ? "enabled" : "disabled");
 }
 
 
@@ -343,13 +354,15 @@ bool LaserMapping::Run() {
         },
         "IEKF Solve and Update");
 
-    InsMeasurement ins_meas;
-    if (FindNearestIns(state_point_.timestamp_, ins_meas)) {
-        ins_for_update_ = ins_meas;
-        ins_for_update_valid_ = true;
-        kf_.Update(ESKF::ObsType::GPS, 1.0);
-        state_point_ = kf_.GetX();
-        ins_for_update_valid_ = false;
+    if (ins_config_.enable_fusion) {
+        InsMeasurement ins_meas;
+        if (FindNearestIns(state_point_.timestamp_, ins_meas)) {
+            ins_for_update_ = ins_meas;
+            ins_for_update_valid_ = true;
+            kf_.Update(ESKF::ObsType::GPS, 1.0);
+            state_point_ = kf_.GetX();
+            ins_for_update_valid_ = false;
+        }
     }
 
     euler_cur_ = state_point_.rot_;

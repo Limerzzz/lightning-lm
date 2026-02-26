@@ -96,10 +96,18 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
         cloud_topic_ = yaml["common"]["lidar_topic"].as<std::string>();
         livox_topic_ = yaml["common"]["livox_lidar_topic"].as<std::string>();
-        if (yaml["ins"] && yaml["ins"]["topic"]) {
-            ins_topic_ = yaml["ins"]["topic"].as<std::string>();
+        if (yaml["ins"]) {
+            if (yaml["ins"]["topic"]) {
+                ins_topic_ = yaml["ins"]["topic"].as<std::string>();
+            } else {
+                ins_topic_ = "/localization_info";
+            }
+            if (yaml["ins"]["enable_fusion"]) {
+                enable_ins_fusion_ = yaml["ins"]["enable_fusion"].as<bool>();
+            }
         } else {
             ins_topic_ = "/localization_info";
+            enable_ins_fusion_ = false;
         }
 
         rclcpp::QoS qos(10);
@@ -127,13 +135,18 @@ bool SlamSystem::Init(const std::string& yaml_path) {
                 Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
             });
 
-        ins_sub_ = node_->create_subscription<bot_msg::msg::LocalizationInfo>(
-            ins_topic_, qos, [this](bot_msg::msg::LocalizationInfo::SharedPtr msg) {
-                if (!running_) {
-                    return;
-                }
-                lio_->ProcessInsMsg(msg);
-            });
+        if (enable_ins_fusion_) {
+            ins_sub_ = node_->create_subscription<bot_msg::msg::LocalizationInfo>(
+                ins_topic_, qos, [this](bot_msg::msg::LocalizationInfo::SharedPtr msg) {
+                    if (!running_) {
+                        return;
+                    }
+                    lio_->ProcessInsMsg(msg);
+                });
+            LOG(INFO) << "INS fusion enabled, subscribe: " << ins_topic_;
+        } else {
+            LOG(INFO) << "INS fusion disabled in config.";
+        }
 
         /// 保存地图服务（在线模式）：调用 SaveMap(req,res) 落盘 ./data/<map_id>/
         savemap_service_ = node_->create_service<SaveMapService>(

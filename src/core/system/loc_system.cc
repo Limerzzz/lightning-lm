@@ -38,10 +38,18 @@ bool LocSystem::Init(const std::string &yaml_path) {
     imu_topic_ = yaml.GetValue<std::string>("common", "imu_topic");
     cloud_topic_ = yaml.GetValue<std::string>("common", "lidar_topic");
     livox_topic_ = yaml.GetValue<std::string>("common", "livox_lidar_topic");
-    if (yaml_node["ins"] && yaml_node["ins"]["topic"]) {
-        ins_topic_ = yaml_node["ins"]["topic"].as<std::string>();
+    if (yaml_node["ins"]) {
+        if (yaml_node["ins"]["topic"]) {
+            ins_topic_ = yaml_node["ins"]["topic"].as<std::string>();
+        } else {
+            ins_topic_ = "/localization_info";
+        }
+        if (yaml_node["ins"]["enable_fusion"]) {
+            enable_ins_fusion_ = yaml_node["ins"]["enable_fusion"].as<bool>();
+        }
     } else {
         ins_topic_ = "/localization_info";
+        enable_ins_fusion_ = false;
     }
 
     rclcpp::QoS qos(10);
@@ -67,12 +75,17 @@ bool LocSystem::Init(const std::string &yaml_path) {
             Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
         });
 
-    ins_sub_ = node_->create_subscription<bot_msg::msg::LocalizationInfo>(
-        ins_topic_, qos, [this](bot_msg::msg::LocalizationInfo::SharedPtr msg) {
-            if (loc_started_) {
-                loc_->ProcessInsMsg(msg);
-            }
-        });
+    if (enable_ins_fusion_) {
+        ins_sub_ = node_->create_subscription<bot_msg::msg::LocalizationInfo>(
+            ins_topic_, qos, [this](bot_msg::msg::LocalizationInfo::SharedPtr msg) {
+                if (loc_started_) {
+                    loc_->ProcessInsMsg(msg);
+                }
+            });
+        LOG(INFO) << "INS fusion enabled, subscribe: " << ins_topic_;
+    } else {
+        LOG(INFO) << "INS fusion disabled in config.";
+    }
 
     if (options_.pub_tf_) {
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(node_);

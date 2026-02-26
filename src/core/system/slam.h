@@ -103,6 +103,7 @@ class SlamSystem {
     std::string cloud_topic_;
     std::string livox_topic_;
     std::string ins_topic_;
+    bool enable_ins_fusion_ = true;
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_ = nullptr;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_ = nullptr;
