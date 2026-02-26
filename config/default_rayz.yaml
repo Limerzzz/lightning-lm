@@ -5,6 +5,16 @@ common:
   livox_lidar_topic: "" # 如果不是livox lidar，无需设置
   imu_topic: "/rayz_imu"
 
+ins:
+  topic: "/localization_info"
+  use_llh: true
+  base_longtitude: 117.37730582
+  base_latitude: 31.96316616
+  base_altitude: 0.0
+  max_time_diff: 0.05
+  rtk_other_noise_scale: 2.0
+
+
 
 
 # fasterlio 参数

@@ -10,6 +10,8 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <string>
 
+#include "bot_msg/msg/localization_info.hpp"
+
 #include "lightning/srv/save_map.hpp"
 #include "livox_ros_driver2/msg/custom_msg.hpp"
 
@@ -100,10 +102,12 @@ class SlamSystem {
     std::string imu_topic_;
     std::string cloud_topic_;
     std::string livox_topic_;
+    std::string ins_topic_;
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_ = nullptr;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_ = nullptr;
     rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr livox_sub_ = nullptr;
+    rclcpp::Subscription<bot_msg::msg::LocalizationInfo>::SharedPtr ins_sub_ = nullptr;
 };
 }  // namespace lightning
 

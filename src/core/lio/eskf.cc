@@ -208,7 +208,9 @@ void ESKF::Update(ESKF::ObsType obs, const double& R) {
         if (state_dim_ > dof_measurement) {
             Eigen::MatrixXd h_x_cur = Eigen::MatrixXd::Zero(dof_measurement, state_dim_);
             h_x_cur.topLeftCorner(dof_measurement, 12) = custom_obs_model_.h_x_;
-            custom_obs_model_.R_ = R * Eigen::MatrixXd::Identity(dof_measurement, dof_measurement);
+            if (custom_obs_model_.R_.rows() != dof_measurement || custom_obs_model_.R_.cols() != dof_measurement) {
+                custom_obs_model_.R_ = R * Eigen::MatrixXd::Identity(dof_measurement, dof_measurement);
+            }
 
             Eigen::MatrixXd K =
                 P_ * h_x_cur.transpose() * (h_x_cur * P_ * h_x_cur.transpose() + custom_obs_model_.R_).inverse();

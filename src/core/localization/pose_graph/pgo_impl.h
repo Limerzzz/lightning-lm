@@ -9,9 +9,12 @@
 #include <thread>
 #include <vector>
 
+#include "common/constant.h"
 #include "common/eigen_types.h"
+#include "common/ins.h"
 #include "common/nav_state.h"
 #include "common/timed_pose.h"
+#include "core/lightning_math.hpp"
 #include "core/graph/optimizer.h"
 #include "core/localization/localization_result.h"
 #include "core/types/edge_se3.h"
@@ -45,6 +48,14 @@ struct PGOFrame {
     // double rtk_interp_time_error = 0;  // 当前帧在rtk队列上做插值时的时间误差
     // common::UTMCoordinate rtk_utm_;    // 与PGO帧最接近的原始RTK观测
     // double rtk_chi2_ = 0.0;            // RTK卡方误差
+
+    // INS/RTK绝对约束
+    bool ins_set_ = false;
+    bool ins_valid_ = false;
+    SE3 ins_pose_;
+    Mat6d ins_cov_ = Mat6d::Identity();
+    double ins_delta_t_ = 0;
+    uint8_t ins_status_ = 0;
 
     // 激光定位观测 | 提供绝对约束
     bool lidar_loc_set_ = false;    // lidarLoc是否已经设置（PGO由lodarLoc触发，正常是有效的）
@@ -116,6 +127,11 @@ struct PGOImpl {
         double pgo_frame_converge_pos_th = 0.05;                      // PGO帧位置收敛阈值
         double pgo_frame_converge_ang_th = 1.0 * constant::kDEG2RAD;  // PGO帧姿态收敛阈值
         double pgo_smooth_factor = 0.01;                              // PGO帧平滑因子
+        double rtk_fix_pos_noise = 1.0;                               // RTK固定解位置噪声
+        double rtk_fix_ang_noise = 2.0 * constant::kDEG2RAD;          // RTK固定解角度噪声
+        double rtk_other_pos_noise = 5.0;                             // RTK其他解位置噪声
+        double rtk_other_ang_noise = 10.0 * constant::kDEG2RAD;       // RTK其他解角度噪声
+        double rtk_outlier_th = 1.0;                                  // RTK outlier阈值
     };
 
     PGOImpl(Options options = {});
@@ -129,6 +145,7 @@ struct PGOImpl {
     // bool AssignRelativePoseIfNeeded(std::shared_ptr<PGOFrame> frame);
     bool AssignLidarOdomPoseIfNeeded(std::shared_ptr<PGOFrame> frame);
     bool AssignDRPoseIfNeeded(std::shared_ptr<PGOFrame> frame);
+    bool AssignInsPoseIfNeeded(std::shared_ptr<PGOFrame> frame);
 
     void UpdateLidarOdomStatusInFrame(NavState& lio_result, std::shared_ptr<PGOFrame> frame);
 
@@ -151,6 +168,7 @@ struct PGOImpl {
     void AddLidarOdomFactors();
 
     void AddDRFactors();
+    void AddInsFactors();
 
     // 如果滑窗第一帧存在边缘化约束，添加之
     void AddPriorFactors();
@@ -204,6 +222,7 @@ struct PGOImpl {
     std::deque<NavState> lidar_odom_pose_queue_;  // LidarOdom观测队列
     std::deque<TimedPose> lidar_loc_pose_queue_;  // LidarLoc观测队列
     std::deque<TimedPose> output_pose_queue_;     // 输出位姿队列
+    std::deque<InsMeasurement> ins_pose_queue_;   // INS/RTK观测队列
 
     // internal variables
     double last_gps_time_ = 0;          // 上一个gps时间戳,用于判断重复/回流数据
@@ -218,6 +237,7 @@ struct PGOImpl {
     std::vector<std::shared_ptr<miao::EdgeSE3>> dr_edges_;              // 相对运动观测（来自DR）
     std::vector<std::shared_ptr<miao::EdgeSE3Prior>> lidar_loc_edges_;  // 激光定位边
     std::vector<std::shared_ptr<miao::EdgeSE3Prior>> prior_edges_;      // 边缘化约束
+    std::vector<std::shared_ptr<miao::EdgeSE3Prior>> ins_edges_;        // INS绝对约束
 
     // output variables
     LocalizationResult result_;  // pgo融合定位结果
@@ -247,6 +267,10 @@ struct PGOImpl {
     bool lidar_odom_conflict_with_dr_ = false;  // LO和DR是否有冲突
     int lidar_odom_conflict_with_dr_cnt_ = 0;
     int lidar_odom_valid_cnt_ = 0;  // 需要缓冲一个计时之后才算有效
+
+    double ins_time_th_ = 0.05;
+
+    void SetInsTimeThreshold(double time_th) { ins_time_th_ = time_th; }
 
     std::ostringstream oss;  // log相关
 };

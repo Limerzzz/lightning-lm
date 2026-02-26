@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/eigen_types.h"
+#include "common/ins.h"
 #include "common/nav_state.h"
 #include "core/localization/localization_result.h"
 
@@ -44,6 +45,9 @@ class PGO {
     /// 处理lidarOdom信息
     bool ProcessLidarOdom(const NavState& lio_result);
 
+    /// 处理INS绝对定位信息
+    bool ProcessIns(const InsMeasurement& ins);
+
     /// 接收激光定位信息（触发PGO优化）
     bool ProcessLidarLoc(const LocalizationResult& loc_result);
 
@@ -63,6 +67,7 @@ class PGO {
 
     /// debug stuffs
     void SetDebug(bool debug = true);
+    void SetInsTimeThreshold(double time_th);
     void LogWindowState();
 
    public:

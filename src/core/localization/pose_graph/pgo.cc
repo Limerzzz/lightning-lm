@@ -22,6 +22,8 @@ void PGO::SetHighFrequencyGlobalOutputHandleFunction(PGO::GlobalOutputHandleFunc
     high_freq_output_func_ = std::move(handle);
 }
 
+void PGO::SetInsTimeThreshold(double time_th) { impl_->SetInsTimeThreshold(time_th); }
+
 void PGO::PubResult() {
     // 在有需要时，高频外推然后向外发送数据
     if (high_freq_output_func_ && impl_->result_.valid_) {
@@ -215,6 +217,22 @@ bool PGO::ProcessLidarOdom(const NavState& lio_result) {
         high_freq_output_func_(parking_result_);
     }
 
+    return true;
+}
+
+bool PGO::ProcessIns(const InsMeasurement& ins) {
+    UL lock(impl_->data_mutex_);
+    if (!impl_->ins_pose_queue_.empty()) {
+        const double last_stamp = impl_->ins_pose_queue_.back().timestamp;
+        if (ins.timestamp < last_stamp) {
+            LOG(WARNING) << "INS timestamp rollback, diff: " << (ins.timestamp - last_stamp);
+        }
+    }
+
+    impl_->ins_pose_queue_.emplace_back(ins);
+    while (impl_->ins_pose_queue_.size() >= PGOImpl::Options::PGO_MAX_SIZE_OF_RTK_POSE_QUEUE) {
+        impl_->ins_pose_queue_.pop_front();
+    }
     return true;
 }
 

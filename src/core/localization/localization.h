@@ -2,8 +2,10 @@
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "std_msgs/msg/int32.hpp"
+#include "bot_msg/msg/localization_info.hpp"
 
 #include "common/imu.h"
+#include "common/ins.h"
 #include "core/lio/laser_mapping.h"
 #include "core/localization/localization_result.h"
 #include "core/system/async_message_process.h"
@@ -62,6 +64,8 @@ class Localization {
 
     /// 处理IMU消息
     void ProcessIMUMsg(IMUPtr imu);
+    /// 处理INS消息
+    void ProcessInsMsg(const bot_msg::msg::LocalizationInfo::SharedPtr msg);
 
     // void ProcessOdomMsg(const nav_msgs::msg::Odometry::SharedPtr odom_msg) override;
 
@@ -135,6 +139,9 @@ class Localization {
 
     /// 保存轨迹
     bool SaveTrajectory(const std::string& file_path);
+
+    // INS/RTK config
+    InsConfig ins_config_;
 };
 }  // namespace loc
 

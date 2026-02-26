@@ -56,6 +56,8 @@ PGOImpl::PGOImpl(Options options) {
     set6dnoise(lidar_loc_noise_, options_.lidar_loc_pos_noise, options_.lidar_loc_ang_noise);
     set6dnoise(lidar_odom_rel_noise_, options_.lidar_odom_pos_noise, options_.lidar_odom_ang_noise);
     set6dnoise(dr_rel_noise_, options_.dr_pos_noise, options_.dr_ang_noise);
+    set6dnoise(rtk_fix_noise_, options_.rtk_fix_pos_noise, options_.rtk_fix_ang_noise);
+    set6dnoise(rtk_other_noise_, options_.rtk_other_pos_noise, options_.rtk_other_ang_noise);
 
     // Setup solver
     miao::OptimizerConfig config(miao::AlgorithmType::LEVENBERG_MARQUARDT,
@@ -94,6 +96,7 @@ void PGOImpl::AddPGOFrame(std::shared_ptr<PGOFrame> pgo_frame) {
     // 如果 LidarOdom 和 DR 都设置失败，结束本函数。
     bool interp_lio_success = AssignLidarOdomPoseIfNeeded(pgo_frame);
     bool interp_dr_success = AssignDRPoseIfNeeded(pgo_frame);
+    AssignInsPoseIfNeeded(pgo_frame);
     if (!interp_lio_success && !interp_dr_success) {
         LOG(ERROR) << "PGO received pgo frame, but assign relative pose failed!";
         return;
@@ -212,6 +215,43 @@ bool PGOImpl::AssignDRPoseIfNeeded(std::shared_ptr<PGOFrame> frame) {
     return false;
 }
 
+bool PGOImpl::AssignInsPoseIfNeeded(std::shared_ptr<PGOFrame> frame) {
+    assert(frame != nullptr);
+    if (ins_pose_queue_.empty()) {
+        return false;
+    }
+
+    InsMeasurement best_match;
+    SE3 interp_pose;
+    bool interp_done = false;
+
+    if (ins_pose_queue_.size() == 1) {
+        const auto& only = ins_pose_queue_.front();
+        const double dt = std::fabs(frame->timestamp_ - only.timestamp);
+        if (dt <= ins_time_th_) {
+            interp_pose = only.pose;
+            best_match = only;
+            interp_done = true;
+        }
+    } else {
+        interp_done = math::PoseInterp<InsMeasurement>(
+            frame->timestamp_, ins_pose_queue_, [](const InsMeasurement& ins) { return ins.timestamp; },
+            [](const InsMeasurement& ins) { return ins.pose; }, interp_pose, best_match, ins_time_th_);
+    }
+
+    if (interp_done) {
+        frame->ins_set_ = true;
+        frame->ins_valid_ = best_match.valid;
+        frame->ins_pose_ = interp_pose;
+        frame->ins_cov_ = best_match.cov;
+        frame->ins_status_ = best_match.status;
+        frame->ins_delta_t_ = frame->timestamp_ - best_match.timestamp;
+        return true;
+    }
+
+    return false;
+}
+
 void PGOImpl::UpdateLidarOdomStatusInFrame(NavState& lio_result, std::shared_ptr<PGOFrame> frame) {
     // 把LidarOdom信息更新到PGOFrame
     frame->lidar_odom_normalized_weight_ = lio_result.confidence_ * Vec6d::Ones();
@@ -273,6 +313,7 @@ void PGOImpl::BuildProblem() {
         AddLidarLocFactors();
     }
 
+    AddInsFactors();
     AddLidarOdomFactors();
     AddPriorFactors();
 }
@@ -284,6 +325,7 @@ void PGOImpl::CleanProblem() {
     lidar_odom_edges_.clear();
     dr_edges_.clear();
     prior_edges_.clear();
+    ins_edges_.clear();
 }
 
 void PGOImpl::AddVertex() {
@@ -446,6 +488,29 @@ void PGOImpl::AddDRFactors() {
         optimizer_->AddEdge(e);
         dr_edges_.emplace_back(e);
     }
+}
+
+void PGOImpl::AddInsFactors() {
+    if (!current_frame_->ins_set_ || !current_frame_->ins_valid_) {
+        return;
+    }
+
+    SE3 ins_obs_pose = current_frame_->ins_pose_;
+    Mat6d ins_obs_cov = current_frame_->ins_cov_;
+
+    Mat6d ins_obs_info = ins_obs_cov.inverse();
+
+    auto e = std::make_shared<miao::EdgeSE3Prior>();
+    e->SetVertex(0, optimizer_->GetVertex(current_frame_->frame_id_));
+    e->SetMeasurement(ins_obs_pose);
+    e->SetInformation(ins_obs_info);
+
+    auto rk = std::make_shared<miao::RobustKernelHuber>();
+    rk->SetDelta(options_.rtk_outlier_th);
+    e->SetRobustKernel(rk);
+
+    optimizer_->AddEdge(e);
+    ins_edges_.emplace_back(e);
 }
 
 void PGOImpl::AddPriorFactors() {

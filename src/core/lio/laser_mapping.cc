@@ -1,11 +1,15 @@
 #include <pcl/common/transforms.h>
 #include <yaml-cpp/yaml.h>
+#include <cmath>
 #include <fstream>
+#include <iomanip>
 
+#include "common/constant.h"
 #include "common/options.h"
 #include "core/lightning_math.hpp"
 #include "laser_mapping.h"
 #include "ui/pangolin_window.h"
+#include "wrapper/ins_converter.h"
 #include "wrapper/ros_utils.h"
 
 namespace lightning {
@@ -24,6 +28,7 @@ bool LaserMapping::Init(const std::string &config_yaml) {
     eskf_options.max_iterations_ = fasterlio::NUM_MAX_ITERATIONS;
     eskf_options.epsi_ = 1e-3 * Eigen::Matrix<double, 23, 1>::Ones();
     eskf_options.lidar_obs_func_ = [this](NavState &s, ESKF::CustomObservationModel &obs) { ObsModel(s, obs); };
+    eskf_options.gps_obs_func_ = [this](NavState &s, ESKF::CustomObservationModel &obs) { InsObsModel(s, obs); };
     eskf_options.use_aa_ = use_aa_;
     kf_.Init(eskf_options);
 
@@ -110,6 +115,8 @@ bool LaserMapping::LoadParamsFromYAML(const std::string &yaml_file) {
     p_imu_->SetGyrBiasCov(Vec3d(b_gyr_cov, b_gyr_cov, b_gyr_cov));
     p_imu_->SetAccBiasCov(Vec3d(b_acc_cov, b_acc_cov, b_acc_cov));
 
+    LoadInsConfigFromYAML(yaml);
+
     return true;
 }
 
@@ -144,6 +151,95 @@ void LaserMapping::ProcessIMU(const lightning::IMUPtr &imu) {
     last_timestamp_imu_ = timestamp;
 
     imu_buffer_.emplace_back(imu);
+}
+
+void LaserMapping::ProcessInsMsg(const bot_msg::msg::LocalizationInfo::SharedPtr &msg) {
+    if (!msg) {
+        return;
+    }
+    ProcessIns(ConvertLocalizationInfo(*msg, ins_config_));
+}
+
+void LaserMapping::ProcessIns(const InsMeasurement &ins) {
+    std::lock_guard<std::mutex> lock(ins_mutex_);
+    if (!ins_buffer_.empty() && ins.timestamp < ins_buffer_.back().timestamp) {
+        LOG(WARNING) << "INS timestamp rollback: " << std::setprecision(18) << ins.timestamp << " < "
+                     << ins_buffer_.back().timestamp;
+    }
+
+    ins_buffer_.push_back(ins);
+    while (ins_buffer_.size() > 500) {
+        ins_buffer_.pop_front();
+    }
+}
+
+bool LaserMapping::FindNearestIns(double timestamp, InsMeasurement &out) {
+    std::lock_guard<std::mutex> lock(ins_mutex_);
+    if (ins_buffer_.empty()) {
+        return false;
+    }
+
+    double best_dt = 1e9;
+    auto best_it = ins_buffer_.end();
+    for (auto it = ins_buffer_.begin(); it != ins_buffer_.end(); ++it) {
+        double dt = std::fabs(it->timestamp - timestamp);
+        if (dt < best_dt) {
+            best_dt = dt;
+            best_it = it;
+        }
+    }
+
+    if (best_it == ins_buffer_.end() || best_dt > ins_config_.max_time_diff) {
+        return false;
+    }
+
+    out = *best_it;
+
+    while (!ins_buffer_.empty() && ins_buffer_.front().timestamp < (timestamp - 2.0)) {
+        ins_buffer_.pop_front();
+    }
+
+    return true;
+}
+
+void LaserMapping::LoadInsConfigFromYAML(const YAML::Node &yaml) {
+    auto ins_node = yaml["ins"];
+    if (ins_node) {
+        if (ins_node["use_llh"]) {
+            ins_config_.use_llh = ins_node["use_llh"].as<bool>();
+        }
+        if (ins_node["base_longtitude"]) {
+            ins_config_.base_longtitude = ins_node["base_longtitude"].as<double>();
+        }
+        if (ins_node["base_latitude"]) {
+            ins_config_.base_latitude = ins_node["base_latitude"].as<double>();
+        }
+        if (ins_node["base_altitude"]) {
+            ins_config_.base_altitude = ins_node["base_altitude"].as<double>();
+        }
+        if (ins_node["max_time_diff"]) {
+            ins_config_.max_time_diff = ins_node["max_time_diff"].as<double>();
+        }
+        if (ins_node["rtk_other_noise_scale"]) {
+            ins_config_.rtk_other_noise_scale = ins_node["rtk_other_noise_scale"].as<double>();
+        }
+    }
+
+    auto pgo_node = yaml["pgo"];
+    if (pgo_node) {
+        if (pgo_node["rtk_fix_pos_noise"]) {
+            ins_config_.rtk_fix_pos_noise = pgo_node["rtk_fix_pos_noise"].as<double>();
+        }
+        if (pgo_node["rtk_fix_ang_noise"]) {
+            ins_config_.rtk_fix_ang_noise = pgo_node["rtk_fix_ang_noise"].as<double>() * constant::kDEG2RAD;
+        }
+        if (pgo_node["rtk_other_pos_noise"]) {
+            ins_config_.rtk_other_pos_noise = pgo_node["rtk_other_pos_noise"].as<double>();
+        }
+        if (pgo_node["rtk_other_ang_noise"]) {
+            ins_config_.rtk_other_ang_noise = pgo_node["rtk_other_ang_noise"].as<double>() * constant::kDEG2RAD;
+        }
+    }
 }
 
 
@@ -244,13 +340,23 @@ bool LaserMapping::Run() {
             // LOG(INFO) << "old yaw: " << old_state.rot_.angleZ() << ", new: " << state_point_.rot_.angleZ();
 
             state_point_.timestamp_ = measures_.lidar_end_time_;
-            euler_cur_ = state_point_.rot_;
-            pos_lidar_ = state_point_.pos_ + state_point_.rot_ * state_point_.offset_t_lidar_;
-
-            /// 保存当前帧位姿到历史记录（用于高频率轨迹输出）
-            pose_history_.emplace_back(state_point_);
         },
         "IEKF Solve and Update");
+
+    InsMeasurement ins_meas;
+    if (FindNearestIns(state_point_.timestamp_, ins_meas)) {
+        ins_for_update_ = ins_meas;
+        ins_for_update_valid_ = true;
+        kf_.Update(ESKF::ObsType::GPS, 1.0);
+        state_point_ = kf_.GetX();
+        ins_for_update_valid_ = false;
+    }
+
+    euler_cur_ = state_point_.rot_;
+    pos_lidar_ = state_point_.pos_ + state_point_.rot_ * state_point_.offset_t_lidar_;
+
+    /// 保存当前帧位姿到历史记录（用于高频率轨迹输出）
+    pose_history_.emplace_back(state_point_);
 
     // update local map
     Timer::Evaluate([&, this]() { MapIncremental(); }, "    Incremental Mapping");
@@ -659,6 +765,30 @@ void LaserMapping::ObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
     std::sort(res_sq2.begin(), res_sq2.end());
     obs.lidar_residual_mean_ = res_sq2[res_sq2.size() / 2];
     obs.lidar_residual_max_ = res_sq2[res_sq2.size() - 1];
+}
+
+void LaserMapping::InsObsModel(NavState &s, ESKF::CustomObservationModel &obs) {
+    if (!ins_for_update_valid_) {
+        obs.valid_ = false;
+        return;
+    }
+
+    const InsMeasurement ins = ins_for_update_;
+    obs.valid_ = ins.valid;
+
+    obs.residual_ = Eigen::Matrix<double, 6, 1>::Zero();
+    obs.h_x_ = Eigen::MatrixXd::Zero(6, 12);
+
+    const Vec3d dp = ins.pose.translation() - s.pos_;
+    const Vec3d dtheta = (s.rot_.inverse() * ins.pose.so3()).log();
+
+    obs.residual_.head<3>() = dp;
+    obs.residual_.tail<3>() = dtheta;
+
+    obs.h_x_.block<3, 3>(0, 0) = Mat3d::Identity();
+    obs.h_x_.block<3, 3>(3, 3) = Mat3d::Identity();
+
+    obs.R_ = ins.cov;
 }
 
 ///////////////////////////  private method /////////////////////////////////////////////////////////////////////

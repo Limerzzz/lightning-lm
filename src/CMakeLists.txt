@@ -31,6 +31,7 @@ add_library(${PROJECT_NAME}.libs SHARED
 
         utils/timer.cc
         utils/pointcloud_utils.cc
+        utils/geodesy.cc
 
         ui/pangolin_window.cc
         ui/pangolin_window_impl.cc
@@ -42,6 +43,7 @@ add_library(${PROJECT_NAME}.libs SHARED
         core/system/loc_system.cc
 
         wrapper/bag_io.cc
+        wrapper/ins_converter.cc
 )
 
 ament_target_dependencies(
@@ -52,6 +54,7 @@ ament_target_dependencies(
         "sensor_msgs"
         "nav_msgs"
         "std_srvs"
+        "bot_msg"
         "message_filters"
         "pcl_conversions"
         "tf2_ros"

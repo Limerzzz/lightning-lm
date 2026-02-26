@@ -26,6 +26,7 @@ bool LocSystem::Init(const std::string &yaml_path) {
     loc_ = std::make_shared<loc::Localization>(opt);
 
     YAML_IO yaml(yaml_path);
+    auto yaml_node = YAML::LoadFile(yaml_path);
 
     std::string map_path = yaml.GetValue<std::string>("system", "map_path");
 
@@ -37,6 +38,11 @@ bool LocSystem::Init(const std::string &yaml_path) {
     imu_topic_ = yaml.GetValue<std::string>("common", "imu_topic");
     cloud_topic_ = yaml.GetValue<std::string>("common", "lidar_topic");
     livox_topic_ = yaml.GetValue<std::string>("common", "livox_lidar_topic");
+    if (yaml_node["ins"] && yaml_node["ins"]["topic"]) {
+        ins_topic_ = yaml_node["ins"]["topic"].as<std::string>();
+    } else {
+        ins_topic_ = "/localization_info";
+    }
 
     rclcpp::QoS qos(10);
 
@@ -59,6 +65,13 @@ bool LocSystem::Init(const std::string &yaml_path) {
     livox_sub_ = node_->create_subscription<livox_ros_driver2::msg::CustomMsg>(
         livox_topic_, qos, [this](livox_ros_driver2::msg::CustomMsg ::SharedPtr cloud) {
             Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
+        });
+
+    ins_sub_ = node_->create_subscription<bot_msg::msg::LocalizationInfo>(
+        ins_topic_, qos, [this](bot_msg::msg::LocalizationInfo::SharedPtr msg) {
+            if (loc_started_) {
+                loc_->ProcessInsMsg(msg);
+            }
         });
 
     if (options_.pub_tf_) {

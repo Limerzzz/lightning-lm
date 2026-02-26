@@ -3,11 +3,13 @@
 #include <fstream>
 #include <iomanip>
 
+#include "common/constant.h"
 #include "core/localization/lidar_loc/lidar_loc.h"
 #include "core/localization/localization.h"
 #include "core/localization/pose_graph/pgo.h"
 #include "io/yaml_io.h"
 #include "ui/pangolin_window.h"
+#include "wrapper/ins_converter.h"
 
 namespace lightning::loc {
 
@@ -23,7 +25,46 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
     }
 
     YAML_IO yaml(yaml_path);
+    auto yaml_node = YAML::LoadFile(yaml_path);
     options_.with_ui_ = yaml.GetValue<bool>("system", "with_ui");
+
+    if (yaml_node["ins"]) {
+        auto ins_node = yaml_node["ins"];
+        if (ins_node["use_llh"]) {
+            ins_config_.use_llh = ins_node["use_llh"].as<bool>();
+        }
+        if (ins_node["base_longtitude"]) {
+            ins_config_.base_longtitude = ins_node["base_longtitude"].as<double>();
+        }
+        if (ins_node["base_latitude"]) {
+            ins_config_.base_latitude = ins_node["base_latitude"].as<double>();
+        }
+        if (ins_node["base_altitude"]) {
+            ins_config_.base_altitude = ins_node["base_altitude"].as<double>();
+        }
+        if (ins_node["max_time_diff"]) {
+            ins_config_.max_time_diff = ins_node["max_time_diff"].as<double>();
+        }
+        if (ins_node["rtk_other_noise_scale"]) {
+            ins_config_.rtk_other_noise_scale = ins_node["rtk_other_noise_scale"].as<double>();
+        }
+    }
+
+    if (yaml_node["pgo"]) {
+        auto pgo_node = yaml_node["pgo"];
+        if (pgo_node["rtk_fix_pos_noise"]) {
+            ins_config_.rtk_fix_pos_noise = pgo_node["rtk_fix_pos_noise"].as<double>();
+        }
+        if (pgo_node["rtk_fix_ang_noise"]) {
+            ins_config_.rtk_fix_ang_noise = pgo_node["rtk_fix_ang_noise"].as<double>() * constant::kDEG2RAD;
+        }
+        if (pgo_node["rtk_other_pos_noise"]) {
+            ins_config_.rtk_other_pos_noise = pgo_node["rtk_other_pos_noise"].as<double>();
+        }
+        if (pgo_node["rtk_other_ang_noise"]) {
+            ins_config_.rtk_other_ang_noise = pgo_node["rtk_other_ang_noise"].as<double>() * constant::kDEG2RAD;
+        }
+    }
 
     /// lidar odom前端
     LaserMapping::Options opt_lio;
@@ -58,6 +99,7 @@ bool Localization::Init(const std::string& yaml_path, const std::string& global_
     /// pose graph
     pgo_ = std::make_shared<PGO>();
     pgo_->SetDebug(false);
+    pgo_->SetInsTimeThreshold(ins_config_.max_time_diff);
 
     ///  各模块的异步调用
     options_.enable_lidar_loc_skip_ = yaml.GetValue<bool>("system", "enable_lidar_loc_skip");
@@ -284,6 +326,16 @@ void Localization::ProcessIMUMsg(IMUPtr imu) {
 
     lidar_loc_->ProcessDR(dr_state);
     pgo_->ProcessDR(dr_state);
+}
+
+void Localization::ProcessInsMsg(const bot_msg::msg::LocalizationInfo::SharedPtr msg) {
+    UL lock(global_mutex_);
+    if (!msg || pgo_ == nullptr) {
+        return;
+    }
+
+    InsMeasurement ins = ConvertLocalizationInfo(*msg, ins_config_);
+    pgo_->ProcessIns(ins);
 }
 
 // void Localization::ProcessOdomMsg(const nav_msgs::msg::Odometry::SharedPtr odom_msg) {

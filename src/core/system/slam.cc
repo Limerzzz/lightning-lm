@@ -96,6 +96,11 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         imu_topic_ = yaml["common"]["imu_topic"].as<std::string>();
         cloud_topic_ = yaml["common"]["lidar_topic"].as<std::string>();
         livox_topic_ = yaml["common"]["livox_lidar_topic"].as<std::string>();
+        if (yaml["ins"] && yaml["ins"]["topic"]) {
+            ins_topic_ = yaml["ins"]["topic"].as<std::string>();
+        } else {
+            ins_topic_ = "/localization_info";
+        }
 
         rclcpp::QoS qos(10);
         // qos.best_effort();
@@ -120,6 +125,14 @@ bool SlamSystem::Init(const std::string& yaml_path) {
         livox_sub_ = node_->create_subscription<livox_ros_driver2::msg::CustomMsg>(
             livox_topic_, qos, [this](livox_ros_driver2::msg::CustomMsg ::SharedPtr cloud) {
                 Timer::Evaluate([&]() { ProcessLidar(cloud); }, "Proc Lidar", true);
+            });
+
+        ins_sub_ = node_->create_subscription<bot_msg::msg::LocalizationInfo>(
+            ins_topic_, qos, [this](bot_msg::msg::LocalizationInfo::SharedPtr msg) {
+                if (!running_) {
+                    return;
+                }
+                lio_->ProcessInsMsg(msg);
             });
 
         /// 保存地图服务（在线模式）：调用 SaveMap(req,res) 落盘 ./data/<map_id>/

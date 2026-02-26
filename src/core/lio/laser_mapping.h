@@ -4,10 +4,14 @@
 #include <pcl/filters/voxel_grid.h>
 #include <condition_variable>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <deque>
 #include <thread>
+
+#include "bot_msg/msg/localization_info.hpp"
 
 #include "common/eigen_types.h"
 #include "common/imu.h"
+#include "common/ins.h"
 #include "common/keyframe.h"
 #include "common/options.h"
 #include "core/ivox3d/ivox3d.h"
@@ -16,6 +20,10 @@
 #include "pointcloud_preprocess.h"
 
 #include "livox_ros_driver2/msg/custom_msg.hpp"
+
+namespace YAML {
+class Node;
+}
 
 namespace lightning {
 
@@ -69,6 +77,10 @@ class LaserMapping {
 
     void ProcessIMU(const lightning::IMUPtr &msg_in);
 
+    /// 处理INS/RTK定位信息
+    void ProcessInsMsg(const bot_msg::msg::LocalizationInfo::SharedPtr &msg);
+    void ProcessIns(const InsMeasurement &ins);
+
     /// 保存前端的地图
     void SaveMap();
 
@@ -113,6 +125,7 @@ class LaserMapping {
     bool SyncPackages();
 
     void ObsModel(NavState &s, ESKF::CustomObservationModel &obs);
+    void InsObsModel(NavState &s, ESKF::CustomObservationModel &obs);
 
     inline void PointBodyToWorld(const PointType &pi, PointType &po) {
         Vec3d p_global(state_point_.rot_ * (state_point_.offset_R_lidar_ * pi.getVector3fMap().cast<double>() +
@@ -213,6 +226,16 @@ class LaserMapping {
     bool use_aa_ = false;  // use anderson acceleration?
 
     std::shared_ptr<ui::PangolinWindow> ui_ = nullptr;
+
+    // INS/RTK
+    InsConfig ins_config_;
+    std::mutex ins_mutex_;
+    std::deque<InsMeasurement> ins_buffer_;
+    InsMeasurement ins_for_update_;
+    bool ins_for_update_valid_ = false;
+
+    bool FindNearestIns(double timestamp, InsMeasurement &out);
+    void LoadInsConfigFromYAML(const YAML::Node &yaml);
 };
 
 }  // namespace lightning
